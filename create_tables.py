@@ -25,7 +25,7 @@ FOREIGN KEY(FROM_DESTINATION) REFERENCES DESTINATION(SHORT_NAME),\
 FOREIGN KEY(TO_DESTINATION) REFERENCES DESTINATION(SHORT_NAME))\
 ")
 
-print ("Tables has been created")
+print ("Tables have been created")
 
 conn.execute("INSERT INTO DESTINATIONS (SHORT_NAME, FULL_NAME) VALUES ('BLK', 'Blackpool International Airport')")
 conn.execute("INSERT INTO DESTINATIONS (SHORT_NAME, FULL_NAME) VALUES ('LPL', 'Liverpool John Lennon Airport')")
