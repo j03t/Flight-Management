@@ -15,16 +15,21 @@ def get_all_flights():
 
 date_format = "%d/%m/%Y"
 
-def flight_search():
-  print("Leave blank if not required")
-  status = input("Status: ")
+# Used to parse input and ensure we get a valid date
+def get_date():
   date = input("Date of departure: ")
   if date:
-    print("FORMAT DATE")
     try:
       date = datetime.strptime(date, date_format).isoformat()
     except:
       print("Invalid date supplied, please use format: dd/mm/YYYY")
+      return get_date()
+
+# Query for flights based on user inputs
+def flight_search():
+  print("Leave blank if not required")
+  status = input("Status: ")
+  date = get_date()
   pilot_id = input("Pilot ID: ")
   from_dest = input("Departing from: ")
   to_dest = input("Flying to: ")
@@ -34,10 +39,13 @@ def flight_search():
       AND DATE(SCHEDULED_DEPARTURE) = date(COALESCE(NULLIF(?,''), SCHEDULED_DEPARTURE)) \
         AND PILOT_ID = COALESCE(NULLIF(?,''), PILOT_ID) \
           AND FROM_DESTINATION = COALESCE(NULLIF(?,''), FROM_DESTINATION) \
-            AND TO_DESTINATION = COALESCE(NULLIF(?,''), TO_DESTINATION)", (status,date, pilot_id, from_dest, to_dest))
+            AND TO_DESTINATION = COALESCE(NULLIF(?,''), TO_DESTINATION)", (status, date, pilot_id, from_dest, to_dest))
+  t = PrettyTable(['FLIGHT_ID', 'FLIGHT_STATUS', "SCHEDULED_DEPARTURE", "EXPECTED_ARRIVAL", "PILOT_ID", "FROM_DESTINATION", "TO_DESTINATION", "ACTUAL_DEPARTURE", "ACTUAL_ARRIVAL"])
   for row in cursor:
-    print(row)
+    t.add_row(row)
+  print(t)
 
+# To prompt user with valid destinations if they choose incorrectly
 def get_destination(prompt):
   dest = input(prompt)
   cursor = conn.execute("SELECT * FROM DESTINATIONS WHERE SHORT_NAME=?", (dest,))
@@ -55,6 +63,7 @@ def get_destination(prompt):
 
 date_time_format = "%H:%M %d/%m/%Y"
 
+# Used to parse input and ensure we get a valid date time
 def get_date_time(prompt):
   input_date = input(prompt)
   try:
@@ -74,6 +83,7 @@ def create_flight():
   conn.commit()
   print("Flight Scheduled")
 
+# Check for pilots without a pilot assigned, ask user which to assign a pilot to, check which pilots are available, then assign user chosen pilot
 def assign_pilot():
   flight_ids = get_flights_without_pilot()
   if flight_ids:
@@ -89,11 +99,12 @@ def assign_pilot():
   else:
     print("No flights require pilots\n")
     
+# Check which pilots don't have a pilot assigned
 def get_flights_without_pilot():
-  cursor = conn.execute("SELECT F.ID, F.STATUS, F.SCHEDULED_DEPARTURE, F.EXPECTED_ARRIVAL, D1.FULL_NAME, D2.FULL_NAME, ACTUAL_DEPARTURE, ACTUAL_ARRIVAL \
+  cursor = conn.execute("SELECT F.ID, F.STATUS, F.SCHEDULED_DEPARTURE, F.EXPECTED_ARRIVAL, D1.FULL_NAME, D2.FULL_NAME \
                         FROM FLIGHTS AS F LEFT JOIN DESTINATIONS AS D1 ON D1.SHORT_NAME = F.FROM_DESTINATION LEFT JOIN DESTINATIONS AS D2 ON D2.SHORT_NAME = F.TO_DESTINATION \
                         WHERE PILOT_ID IS NULL")
-  t = PrettyTable(['FLIGHT_ID', 'FLIGHT_STATUS', "SCHEDULED_DEPARTURE", "EXPECTED_ARRIVAL", "FROM_DESTINATION", "TO_DESTINATION", "ACTUAL_DEPARTURE", "ACTUAL_ARRIVAL"])
+  t = PrettyTable(['FLIGHT_ID', 'FLIGHT_STATUS', "SCHEDULED_DEPARTURE", "EXPECTED_ARRIVAL", "FROM_DESTINATION", "TO_DESTINATION"])
   flight_ids = []
   for row in cursor:
      t.add_row(row)
@@ -103,6 +114,7 @@ def get_flights_without_pilot():
     print(t)
   return flight_ids
 
+# Validate user input based on known flight ids
 def get_valid_flight_id(flight_ids):
   flight_id = input("Please enter flight ID: ")
   if flight_id in set(flight_ids):
@@ -111,6 +123,7 @@ def get_valid_flight_id(flight_ids):
     print("Choose from the values: ", flight_ids)
     return get_valid_flight_id(flight_ids)
 
+# Check which pilots don't have a flight scheduled within the window of the target flight
 def get_available_pilots(flight_id):
   cursor = conn.execute("WITH F1 AS (SELECT DATE(SCHEDULED_DEPARTURE, \"-1 DAY\") MIN, DATE(EXPECTED_ARRIVAL, \"+1 DAY\") MAX FROM FLIGHTS WHERE ID = ?) SELECT ID, FIRST_NAME||' '||LAST_NAME FROM PILOTS WHERE ID NOT IN (SELECT COALESCE(PILOT_ID,0) FROM FLIGHTS WHERE SCHEDULED_DEPARTURE BETWEEN (SELECT MIN FROM F1) AND (SELECT MAX FROM F1))", (flight_id))
   pilot_ids = []
@@ -123,6 +136,7 @@ def get_available_pilots(flight_id):
     print(t)
   return pilot_ids
 
+# Validate user input based on known pilot ids
 def get_valid_pilot_id(pilot_ids):
   pilot_id = input("Please enter pilot ID: ")
   if pilot_id in set(pilot_ids):
@@ -130,7 +144,8 @@ def get_valid_pilot_id(pilot_ids):
   else:
     print("Choose from the values: ", pilot_ids)
     return get_valid_flight_id(pilot_ids)
-  
+
+# Create a new pilot
 def onboard_pilot():
   first_name = input("First name: ")
   last_name = input("Last name: ")
@@ -139,6 +154,24 @@ def onboard_pilot():
   conn.commit()
   print("Pilot added\n")
 
+# Check the upcoming flights for a particular pilot
+def pilot_schedule():
+  cursor = conn.execute("SELECT ID, FIRST_NAME||' '||LAST_NAME FROM PILOTS")
+  t = PrettyTable(['PILOT ID', "NAME"])
+  pilot_ids = []
+  for row in cursor:
+    t.add_row(row)
+    pilot_ids.append(str(row[0]))
+  print("Choose a pilot to view schedule for: ")
+  print(t)
+  pilot_id = get_valid_pilot_id(pilot_ids)
+  cursor = conn.execute("SELECT SCHEDULED_DEPARTURE, EXPECTED_ARRIVAL, D1.FULL_NAME, D2.FULL_NAME FROM FLIGHTS LEFT JOIN DESTINATIONS AS D1 ON D1.SHORT_NAME = FROM_DESTINATION LEFT JOIN DESTINATIONS AS D2 ON D2.SHORT_NAME = TO_DESTINATION WHERE PILOT_ID = ? AND DATE(SCHEDULED_DEPARTURE) >= DATE('NOW')", (pilot_id))
+  t = PrettyTable(["SCHEDULED_DEPARTURE", "EXPECTED_ARRIVAL", "FROM_DESTINATION", "TO_DESTINATION"])
+  for row in cursor:
+    t.add_row(row)
+  print(t)
+
+# Choose whether flight is departed or arrived
 def update_flight():
   match input(
 "1) Flight Departed\n\
@@ -147,8 +180,8 @@ def update_flight():
       departed()
     case "2":
       arrived()
-      # arrived()
   
+# Check which flights are scheduled to depart today and let user choose which one to set to departed and update the actual departure time
 def departed():
   cursor = conn.execute("SELECT F.ID, F.SCHEDULED_DEPARTURE, F.EXPECTED_ARRIVAL, D1.FULL_NAME, D2.FULL_NAME FROM FLIGHTS F LEFT JOIN DESTINATIONS AS D1 ON D1.SHORT_NAME = F.FROM_DESTINATION LEFT JOIN DESTINATIONS AS D2 ON D2.SHORT_NAME = F.TO_DESTINATION WHERE DATE(F.SCHEDULED_DEPARTURE) = DATE('NOW') AND PILOT_ID IS NOT NULL AND F.STATUS IS 'Scheduled'")
   t = PrettyTable(['FLIGHT_ID', "SCHEDULED_DEPARTURE", "EXPECTED_ARRIVAL", "FROM_DESTINATION", "TO_DESTINATION"])
@@ -166,6 +199,7 @@ def departed():
   else:
     print("No flights left to depart today")
 
+# Check which flights are departed and let user choose which one to set to arrived and update the actual arrival time
 def arrived():
   cursor = conn.execute("SELECT F.ID, F.ACTUAL_DEPARTURE, F.EXPECTED_ARRIVAL, D1.FULL_NAME, D2.FULL_NAME FROM FLIGHTS F LEFT JOIN DESTINATIONS AS D1 ON D1.SHORT_NAME = F.FROM_DESTINATION LEFT JOIN DESTINATIONS AS D2 ON D2.SHORT_NAME = F.TO_DESTINATION WHERE F.STATUS IS 'Departed'")
   t = PrettyTable(['FLIGHT_ID', "ACTUAL_DEPARTURE", "EXPECTED_ARRIVAL", "FROM_DESTINATION", "TO_DESTINATION"])
@@ -178,13 +212,13 @@ def arrived():
     print(t)
     flight_id = get_valid_flight_id(flight_ids)
     conn.execute("UPDATE FLIGHTS SET STATUS = 'Arrived', ACTUAL_ARRIVAL = DATETIME('NOW') WHERE ID = ?", flight_id)
-    # cursor = conn.execute("WITH T1 AS (SELECT ROUND((JULIANDAY(ACTUAL_ARRIVAL) - JULIANDAY(ACTUAL_DEPARTURE)) * 24) AS FLIGHT_HOURS, PILOT_ID  FROM FLIGHTS WHERE ID = ?) UPDATE PILOTS SET FLIGHT_HOURS = FLIGHT_HOURS + T1.FLIGHT_HOURS WHERE ID = T1.PILOT_ID", flight_id)
     conn.execute("UPDATE PILOTS SET FLIGHT_HOURS = FLIGHT_HOURS + (SELECT ROUND((JULIANDAY(ACTUAL_ARRIVAL) - JULIANDAY(ACTUAL_DEPARTURE)) * 24) AS FLIGHT_HOURS  FROM FLIGHTS WHERE ID = ?) WHERE ID = (SELECT PILOT_ID FROM FLIGHTS WHERE ID = ?)", (flight_id, flight_id))
     conn.commit()
     print("Flight ", flight_id, " set to arrived and pilot flight hours updated")
   else:
     print("No flights waiting to arrive")
 
+# User options menu
 while True:
   match input(
 "1) Get all flights\n\
@@ -192,7 +226,8 @@ while True:
 3) Create a new flight\n\
 4) Assign pilot to flight\n\
 5) Onboard a pilot\n\
-6) Update flight status\
+6) Check pilot schedule\n\
+7) Update flight status\
 \n"):
     case "1":
       get_all_flights()
@@ -205,6 +240,8 @@ while True:
     case "5":
       onboard_pilot()
     case "6":
+      pilot_schedule()
+    case "7":
       update_flight()
     case _:
       print("Unrecognised input")
